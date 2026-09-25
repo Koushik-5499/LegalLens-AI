@@ -32,6 +32,14 @@ app.get('/', (req, res) => {
     });
 });
 
+// Render health check endpoint
+app.get("/healthz", (req, res) => {
+  res.status(200).json({
+    service: "LegalLens AI",
+    status: "online"
+  });
+});
+
 // Health endpoint
 app.get('/api/health', (req, res) => {
     res.json({
