@@ -11,7 +11,7 @@ dotenv.config();
 const { processDocumentWithAI } = require('./services/aiService');
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 10000;
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
@@ -158,6 +158,6 @@ app.post('/api/compare', upload.array('documents', 2), async (req, res) => {
     }
 });
 
-app.listen(PORT, "0.0.0.0", () => {
+app.listen(PORT, () => {
     console.log(`Backend server running on port ${PORT}`);
 });
