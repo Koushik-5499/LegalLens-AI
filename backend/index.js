@@ -16,8 +16,25 @@ const PORT = process.env.PORT || 10000;
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-// Setup multer for file uploads
-const upload = multer({ dest: 'uploads/' });
+// Setup multer for file uploads with strict security limits
+const upload = multer({ 
+    dest: 'uploads/',
+    limits: {
+        fileSize: 10 * 1024 * 1024, // 10 MB limit
+    },
+    fileFilter: (req, file, cb) => {
+        const allowedMimeTypes = [
+            'application/pdf',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'text/plain'
+        ];
+        if (allowedMimeTypes.includes(file.mimetype)) {
+            cb(null, true);
+        } else {
+            cb(new Error("Unsupported file format"), false);
+        }
+    }
+});
 
 // Ensure uploads directory exists
 if (!fs.existsSync('uploads')) {
@@ -49,7 +66,16 @@ app.get('/api/health', (req, res) => {
 });
 
 // Upload and analyze endpoint
-app.post('/api/analyze', upload.single('document'), async (req, res) => {
+app.post('/api/analyze', (req, res, next) => {
+    upload.single('document')(req, res, function (err) {
+        if (err instanceof multer.MulterError) {
+            return res.status(413).json({ error: "File too large. Maximum size is 10MB." });
+        } else if (err) {
+            return res.status(415).json({ error: err.message });
+        }
+        next();
+    });
+}, async (req, res) => {
     let filePath;
     try {
         if (!req.file) {
@@ -113,7 +139,16 @@ app.post('/api/ask', async (req, res) => {
 });
 
 // Compare endpoint
-app.post('/api/compare', upload.array('documents', 2), async (req, res) => {
+app.post('/api/compare', (req, res, next) => {
+    upload.array('documents', 2)(req, res, function (err) {
+        if (err instanceof multer.MulterError) {
+            return res.status(413).json({ error: "File too large. Maximum size is 10MB." });
+        } else if (err) {
+            return res.status(415).json({ error: err.message });
+        }
+        next();
+    });
+}, async (req, res) => {
     try {
         if (!req.files || req.files.length !== 2) {
             return res.status(400).json({ error: "Exactly two files are required for comparison" });
