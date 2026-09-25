@@ -24,6 +24,14 @@ if (!fs.existsSync('uploads')) {
     fs.mkdirSync('uploads');
 }
 
+// Root endpoint
+app.get('/', (req, res) => {
+    res.json({
+        service: "LegalLens AI",
+        status: "online"
+    });
+});
+
 // Health endpoint
 app.get('/api/health', (req, res) => {
     res.json({
