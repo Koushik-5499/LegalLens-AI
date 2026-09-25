@@ -1,248 +1,414 @@
-import React, { useState, useEffect } from 'react';
-import { AlertCircle, FileText, CheckCircle2, ChevronRight, MessageSquare, Download, Loader2 } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
+import {
+  AlertCircle, FileText, CheckCircle2, ChevronRight, MessageSquare,
+  Loader2, Users, Calendar, DollarSign, ShieldAlert, BookOpen,
+  AlertTriangle, Send, Lightbulb, ExternalLink
+} from 'lucide-react';
 import axios from 'axios';
 import clsx from 'clsx';
+import API_BASE_URL, { parseApiError, getFromStorage } from '../utils/api';
+
+// === ATTENTION LEVEL STYLING ===
+function getAttentionStyle(level) {
+  if (!level) return { bg: 'bg-slate-100', text: 'text-slate-700', border: 'border-slate-200', label: 'Notice' };
+  const l = level.toLowerCase();
+  if (l.includes('high') || l.includes('critical') || l.includes('severe') || l.includes('danger'))
+    return { bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200', label: level };
+  if (l.includes('medium') || l.includes('important') || l.includes('moderate'))
+    return { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200', label: level };
+  if (l.includes('low') || l.includes('minor') || l.includes('informational'))
+    return { bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200', label: level };
+  return { bg: 'bg-slate-50', text: 'text-slate-700', border: 'border-slate-200', label: level };
+}
+
+// === SUGGESTED QUESTIONS ===
+const SUGGESTED_QUESTIONS = [
+  "What are the payment terms?",
+  "What are the termination conditions?",
+  "What are the major risks?",
+  "Who are the parties?",
+  "Are there important deadlines?",
+  "Explain this agreement in simple language."
+];
 
 export default function AnalysisPage() {
   const [data, setData] = useState(null);
+  const [fileName, setFileName] = useState('');
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
   const [chatLog, setChatLog] = useState([]);
   const [asking, setAsking] = useState(false);
+  const chatScrollRef = useRef(null);
+  const chatInputRef = useRef(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
-    // Load data from localStorage (actual analysis result)
-    const loadData = () => {
-      const resultStr = localStorage.getItem('analysis_result');
-      if (resultStr) {
-        try {
-          setData(JSON.parse(resultStr));
-        } catch(e) {
-          console.error("Failed to parse analysis");
-        }
-      }
+    const timer = setTimeout(() => {
+      const result = getFromStorage('analysis_result');
+      const name = getFromStorage('analysis_file_name');
+      if (result) setData(result);
+      if (name) setFileName(name);
       setLoading(false);
-    };
-    
-    // Slight delay to simulate natural transition
-    const timer = setTimeout(loadData, 300);
+    }, 300);
     return () => clearTimeout(timer);
   }, []);
 
-  const handleAsk = async (e) => {
-    e.preventDefault();
-    if (!query.trim()) return;
+  useEffect(() => {
+    if (chatScrollRef.current) {
+      chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+    }
+  }, [chatLog, asking]);
 
-    const userQ = query;
-    setChatLog([...chatLog, { role: 'user', content: userQ }]);
+  const askQuestion = useCallback(async (questionText) => {
+    if (!questionText?.trim() || asking) return;
+
+    const userQ = questionText.trim();
+    setChatLog(prev => [...prev, { role: 'user', content: userQ }]);
     setQuery('');
     setAsking(true);
 
     try {
-      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
-      const res = await axios.post(`${API_URL}/api/ask`, {
+      const res = await axios.post(`${API_BASE_URL}/api/ask`, {
         query: userQ,
-        documentText: data.extractedText
-      });
-      setChatLog(prev => [...prev, { role: 'ai', content: res.data.answer.answer, source: res.data.answer.source }]);
-      setAsking(false);
+        documentText: data?.extractedText || ''
+      }, { timeout: 120000 });
+
+      // Handle varied response structures from backend
+      const answer = res.data?.answer;
+      let content = '';
+      let source = '';
+
+      if (typeof answer === 'string') {
+        content = answer;
+      } else if (answer && typeof answer === 'object') {
+        content = answer.answer || answer.content || JSON.stringify(answer);
+        source = answer.source || answer.reference || '';
+      } else {
+        content = 'No answer was returned. Please try rephrasing your question.';
+      }
+
+      setChatLog(prev => [...prev, { role: 'ai', content, source }]);
     } catch (err) {
-      console.error(err);
-      setChatLog(prev => [...prev, { role: 'ai', content: "AI analysis is temporarily unavailable. Please try again." }]);
+      setChatLog(prev => [...prev, {
+        role: 'ai',
+        content: parseApiError(err),
+        isError: true
+      }]);
+    } finally {
       setAsking(false);
+      chatInputRef.current?.focus();
     }
+  }, [asking, data]);
+
+  const handleSubmit = (e) => {
+    e?.preventDefault();
+    askQuestion(query);
   };
 
+  // === LOADING STATE ===
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <Loader2 className="w-10 h-10 animate-spin text-blue-600" />
+      <div className="flex flex-col h-[60vh] items-center justify-center space-y-4" role="status" aria-label="Loading analysis">
+        <Loader2 className="w-10 h-10 animate-spin text-blue-600" aria-hidden="true" />
+        <p className="text-slate-500 font-medium">Loading analysis…</p>
       </div>
     );
   }
 
+  // === EMPTY STATE ===
   if (!data || !data.analysis) {
     return (
-      <div className="p-8 text-center">
-        <p className="text-slate-500">No analysis found. Please upload a document first.</p>
+      <div className="flex flex-col items-center justify-center h-[60vh] text-center space-y-4 px-4">
+        <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center">
+          <FileText className="w-8 h-8 text-slate-400" aria-hidden="true" />
+        </div>
+        <h2 className="text-xl font-bold text-slate-900">No Analysis Found</h2>
+        <p className="text-slate-500 max-w-md">Upload and analyze a document to see results here.</p>
+        <button
+          onClick={() => navigate('/dashboard/upload')}
+          className="bg-blue-600 text-white px-6 py-2.5 rounded-xl font-medium hover:bg-blue-700 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+        >
+          Upload Document
+        </button>
       </div>
     );
   }
 
   const { analysis } = data;
 
+  // Safely access arrays with fallbacks
+  const parties = Array.isArray(analysis.parties) ? analysis.parties : [];
+  const dates = Array.isArray(analysis.importantDates) ? analysis.importantDates : [];
+  const financials = Array.isArray(analysis.financialTerms) ? analysis.financialTerms : [];
+  const clauses = Array.isArray(analysis.keyClauses) ? analysis.keyClauses : [];
+  const attentionAreas = Array.isArray(analysis.attentionAreas) ? analysis.attentionAreas : [];
+  const lawyerQuestions = Array.isArray(analysis.questionsForLawyer) ? analysis.questionsForLawyer : [];
+
   return (
-    <div className="max-w-6xl mx-auto space-y-8">
-      {/* Header */}
-      <div className="flex justify-between items-start">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900 mb-2">{analysis.documentType || 'Document Analysis'}</h1>
-          <p className="text-slate-500 text-sm flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 text-emerald-500" /> Analysis Complete
-          </p>
-        </div>
-        <button className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg text-slate-700 font-medium hover:bg-slate-50 transition-colors">
-          <Download className="w-4 h-4" /> Export Report
-        </button>
+    <div className="max-w-7xl mx-auto space-y-6 sm:space-y-8">
+
+      {/* AI Disclaimer */}
+      <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex items-start gap-3" role="alert">
+        <ShieldAlert className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" aria-hidden="true" />
+        <p className="text-sm text-blue-800">
+          <strong>AI-Generated Informational Analysis.</strong> This does not constitute legal advice.
+          Consult a qualified legal professional for official guidance.
+        </p>
       </div>
 
-      <div className="grid md:grid-cols-3 gap-8">
-        {/* Left Column - Analysis Content */}
-        <div className="md:col-span-2 space-y-8">
-          
+      {/* Header */}
+      <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold text-slate-900">
+            {analysis.documentType || 'Document Analysis'}
+          </h1>
+          {fileName && <p className="text-sm text-slate-500 mt-1">Source: {fileName}</p>}
+          <div className="flex items-center gap-2 mt-2">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm font-medium">
+              <CheckCircle2 className="w-4 h-4" aria-hidden="true" /> Analysis Complete
+            </span>
+          </div>
+        </div>
+      </header>
+
+      <div className="grid lg:grid-cols-3 gap-6 lg:gap-8">
+
+        {/* === LEFT COLUMN: Analysis === */}
+        <div className="lg:col-span-2 space-y-6 sm:space-y-8">
+
           {/* Executive Summary */}
-          <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-            <h2 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
-              <FileText className="w-5 h-5 text-blue-600" /> Executive Summary
+          <section className="bg-white p-5 sm:p-8 rounded-2xl border border-slate-200 shadow-sm" aria-labelledby="summary-title">
+            <h2 id="summary-title" className="text-lg sm:text-xl font-bold text-slate-900 mb-4 flex items-center gap-2">
+              <BookOpen className="w-6 h-6 text-blue-600" aria-hidden="true" /> Executive Summary
             </h2>
-            <p className="text-slate-700 leading-relaxed bg-slate-50 p-4 rounded-xl border border-slate-100">
-              {analysis.summary}
+            <p className="text-slate-700 leading-relaxed text-base sm:text-lg">
+              {analysis.summary || 'No summary available.'}
             </p>
           </section>
 
-          {/* Important Information Cards */}
-          <section>
-            <h2 className="text-lg font-bold text-slate-900 mb-4">Key Details</h2>
-            <div className="grid grid-cols-2 gap-4">
-              <InfoCard label="Parties Involved" value={analysis.parties?.join(' & ')} />
-              <InfoCard label="Important Dates" value={analysis.importantDates?.join(', ')} />
-              <InfoCard label="Financial Terms" value={analysis.financialTerms?.join(', ')} />
+          {/* Key Details */}
+          <section aria-labelledby="details-title">
+            <h2 id="details-title" className="text-lg sm:text-xl font-bold text-slate-900 mb-4">Key Document Details</h2>
+            <div className="grid sm:grid-cols-3 gap-4">
+              <DetailCard icon={<Users className="w-5 h-5" />} label="Parties" items={parties} />
+              <DetailCard icon={<Calendar className="w-5 h-5" />} label="Important Dates" items={dates} />
+              <DetailCard icon={<DollarSign className="w-5 h-5" />} label="Financial Terms" items={financials} />
             </div>
           </section>
 
-          {/* Attention Areas */}
-          <section>
-            <h2 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
-              <AlertCircle className="w-5 h-5 text-red-500" /> Requires Attention
+          {/* Risks & Attention Areas */}
+          {attentionAreas.length > 0 && (
+            <section aria-labelledby="risks-title">
+              <h2 id="risks-title" className="text-lg sm:text-xl font-bold text-slate-900 mb-4 flex items-center gap-2">
+                <AlertTriangle className="w-6 h-6 text-red-500" aria-hidden="true" /> Risks & Attention Areas
+              </h2>
+              <div className="space-y-4">
+                {attentionAreas.map((area, idx) => (
+                  <article key={idx} className="bg-red-50 border border-red-100 p-5 sm:p-6 rounded-2xl">
+                    <h3 className="font-bold text-red-900 text-lg mb-2">{area.title || `Attention Area ${idx + 1}`}</h3>
+                    <p className="text-red-800 mb-4">{area.reason}</p>
+                    {area.excerpt && (
+                      <blockquote className="bg-white p-4 rounded-xl border border-red-100 text-sm text-slate-700 italic mb-3">
+                        "{area.excerpt}"
+                      </blockquote>
+                    )}
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      {area.location && (
+                        <span className="text-xs font-bold text-red-600 uppercase tracking-wider flex items-center gap-1">
+                          <ExternalLink className="w-3 h-3" aria-hidden="true" /> {area.location}
+                        </span>
+                      )}
+                      {area.suggestedQuestion && (
+                        <button
+                          onClick={() => askQuestion(area.suggestedQuestion)}
+                          className="text-xs font-semibold bg-red-100 hover:bg-red-200 text-red-800 px-3 py-1.5 rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+                        >
+                          Ask AI about this →
+                        </button>
+                      )}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* Extracted Clauses */}
+          <section aria-labelledby="clauses-title">
+            <h2 id="clauses-title" className="text-lg sm:text-xl font-bold text-slate-900 mb-4 flex items-center gap-2">
+              <FileText className="w-6 h-6 text-slate-700" aria-hidden="true" /> Extracted Clauses
+              {clauses.length > 0 && (
+                <span className="text-sm font-normal text-slate-500">({clauses.length} found)</span>
+              )}
             </h2>
-            <div className="space-y-4">
-              {(!analysis.attentionAreas || analysis.attentionAreas.length === 0) ? (
-                <p className="text-slate-500 text-sm italic">No specific attention areas identified.</p>
-              ) : analysis.attentionAreas.map((area, idx) => (
-                <div key={idx} className="bg-red-50 border border-red-100 p-5 rounded-2xl">
-                  <h3 className="font-bold text-red-900 mb-2">{area.title}</h3>
-                  <p className="text-red-800 text-sm mb-4">{area.reason}</p>
-                  <div className="bg-white p-3 rounded-lg border border-red-100 text-sm text-slate-600 font-mono mb-3">
-                    "{area.excerpt}"
-                  </div>
-                  <p className="text-xs font-medium text-red-600 uppercase tracking-wide">Ref: {area.location}</p>
-                </div>
-              ))}
-            </div>
+            {clauses.length === 0 ? (
+              <div className="bg-slate-50 p-6 rounded-2xl border border-slate-200 text-center text-slate-500 italic">
+                No specific clauses were extracted from this document.
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {clauses.map((clause, idx) => {
+                  const style = getAttentionStyle(clause.attentionLevel);
+                  return (
+                    <article key={idx} className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200 shadow-sm">
+                      <div className="flex flex-wrap justify-between items-start gap-3 mb-3">
+                        <h3 className="font-bold text-slate-900 text-lg">{clause.title || `Clause ${idx + 1}`}</h3>
+                        <span className={clsx(
+                          "px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider border shrink-0",
+                          style.bg, style.text, style.border
+                        )}>
+                          {style.label}
+                        </span>
+                      </div>
+                      {clause.explanation && (
+                        <p className="text-slate-700 mb-4 leading-relaxed">{clause.explanation}</p>
+                      )}
+                      {clause.excerpt && (
+                        <blockquote className="bg-slate-50 p-4 rounded-xl border border-slate-100 text-sm text-slate-600 italic mb-3">
+                          "{clause.excerpt}"
+                        </blockquote>
+                      )}
+                      {clause.location && (
+                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                          <ExternalLink className="w-3 h-3" aria-hidden="true" /> {clause.location}
+                        </p>
+                      )}
+                    </article>
+                  );
+                })}
+              </div>
+            )}
           </section>
-
-          {/* Key Clauses */}
-          <section>
-            <h2 className="text-lg font-bold text-slate-900 mb-4">Important Clauses Explained</h2>
-            <div className="space-y-4">
-              {(!analysis.keyClauses || analysis.keyClauses.length === 0) ? (
-                <p className="text-slate-500 text-sm italic">No key clauses identified.</p>
-              ) : analysis.keyClauses.map((clause, idx) => (
-                <div key={idx} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-                  <div className="flex justify-between items-start mb-3">
-                    <h3 className="font-bold text-slate-900">{clause.title}</h3>
-                    <span className={clsx(
-                      "px-2.5 py-1 rounded-full text-xs font-medium",
-                      clause.attentionLevel === 'Important' ? "bg-amber-100 text-amber-800" : "bg-blue-100 text-blue-800"
-                    )}>
-                      {clause.attentionLevel}
-                    </span>
-                  </div>
-                  <p className="text-slate-700 font-medium mb-3">{clause.explanation}</p>
-                  <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 text-sm text-slate-500 font-mono mb-2">
-                    "{clause.excerpt}"
-                  </div>
-                  <p className="text-xs font-medium text-slate-400 uppercase">Ref: {clause.location}</p>
-                </div>
-              ))}
-            </div>
-          </section>
-
         </div>
 
-        {/* Right Column - Q&A & Lawyer Prep */}
-        <div className="space-y-8">
-          
+        {/* === RIGHT COLUMN: Chat & Lawyer === */}
+        <div className="space-y-6 sm:space-y-8">
+
           {/* Ask Document */}
-          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col h-[500px]">
-            <div className="p-4 border-b border-slate-200 bg-slate-50 rounded-t-2xl">
-              <h2 className="font-bold text-slate-900 flex items-center gap-2">
-                <MessageSquare className="w-5 h-5 text-blue-600" /> Ask Your Document
+          <section className="bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col h-auto lg:h-[580px] overflow-hidden lg:sticky lg:top-4" aria-labelledby="ask-title">
+            <div className="p-4 sm:p-5 border-b border-slate-200 bg-slate-50">
+              <h2 id="ask-title" className="font-bold text-slate-900 flex items-center gap-2">
+                <MessageSquare className="w-5 h-5 text-blue-600" aria-hidden="true" /> Ask Your Document
               </h2>
+              <p className="text-xs text-slate-500 mt-1">Ask questions grounded in the uploaded document.</p>
             </div>
-            <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/50">
+
+            <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-3 min-h-[200px] lg:min-h-0" ref={chatScrollRef}>
               {chatLog.length === 0 ? (
-                <div className="text-center text-slate-500 text-sm mt-10">
-                  Ask a question about the document.<br/>e.g., "What is the notice period?"
+                <div className="space-y-3">
+                  <p className="text-sm text-slate-500 text-center mb-3">Try asking:</p>
+                  {SUGGESTED_QUESTIONS.map((sq, i) => (
+                    <button
+                      key={i}
+                      onClick={() => askQuestion(sq)}
+                      disabled={asking}
+                      className="w-full text-left p-3 text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-700 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 transition-colors font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50"
+                    >
+                      <Lightbulb className="w-4 h-4 inline mr-2 text-amber-500" aria-hidden="true" />
+                      {sq}
+                    </button>
+                  ))}
                 </div>
               ) : (
                 chatLog.map((msg, i) => (
-                  <div key={i} className={clsx("max-w-[90%] rounded-2xl p-3 text-sm", msg.role === 'user' ? "bg-blue-600 text-white self-end ml-auto" : "bg-white border border-slate-200 text-slate-800")}>
-                    <p>{msg.content}</p>
+                  <div key={i} className={clsx(
+                    "max-w-[90%] rounded-2xl p-4 text-sm",
+                    msg.role === 'user'
+                      ? "bg-blue-600 text-white ml-auto rounded-br-sm"
+                      : msg.isError
+                        ? "bg-red-50 border border-red-200 text-red-800 rounded-bl-sm"
+                        : "bg-slate-50 border border-slate-200 text-slate-800 rounded-bl-sm"
+                  )}>
+                    <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
                     {msg.source && (
-                      <div className="mt-2 pt-2 border-t border-slate-100 text-xs text-slate-500 font-medium">
-                        Source: {msg.source}
+                      <div className={clsx(
+                        "mt-3 pt-3 text-xs font-medium border-t",
+                        msg.role === 'user' ? "border-blue-500/40 text-blue-200" : "border-slate-200 text-slate-500"
+                      )}>
+                        <span className="font-bold uppercase tracking-wider text-[10px] block mb-1">Source:</span>
+                        <span className="italic">{msg.source}</span>
                       </div>
                     )}
                   </div>
                 ))
               )}
               {asking && (
-                <div className="bg-white border border-slate-200 text-slate-800 max-w-[90%] rounded-2xl p-3 text-sm flex items-center gap-2">
-                  <Loader2 className="w-4 h-4 animate-spin" /> Analyzing document...
+                <div className="bg-slate-50 border border-slate-200 max-w-[80%] rounded-2xl rounded-bl-sm p-4 text-sm flex items-center gap-3" role="status">
+                  <Loader2 className="w-4 h-4 animate-spin text-blue-600" aria-hidden="true" />
+                  <span className="text-slate-600 font-medium">Analyzing…</span>
                 </div>
               )}
             </div>
-            <div className="p-4 border-t border-slate-200 bg-white rounded-b-2xl">
-              <form onSubmit={handleAsk} className="flex gap-2">
-                <input 
-                  type="text" 
+
+            <div className="p-3 sm:p-4 border-t border-slate-200 bg-white">
+              <form onSubmit={handleSubmit} className="flex gap-2">
+                <label htmlFor="ask-input" className="sr-only">Type your question about the document</label>
+                <input
+                  id="ask-input"
+                  ref={chatInputRef}
+                  type="text"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Ask a question..."
-                  className="flex-1 border border-slate-300 rounded-xl px-4 py-2 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                  placeholder="Type your question…"
+                  className="flex-1 border border-slate-300 rounded-xl px-4 py-3 text-sm outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 transition-all bg-slate-50 focus:bg-white"
                   disabled={asking}
+                  autoComplete="off"
                 />
-                <button 
+                <button
                   type="submit"
                   disabled={asking || !query.trim()}
-                  className="bg-blue-600 text-white p-2 rounded-xl hover:bg-blue-700 disabled:opacity-50"
+                  className="bg-blue-600 text-white px-4 py-3 rounded-xl hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+                  aria-label="Send question"
                 >
-                  <ChevronRight className="w-5 h-5" />
+                  <Send className="w-5 h-5" aria-hidden="true" />
                 </button>
               </form>
             </div>
           </section>
 
           {/* Questions for Lawyer */}
-          <section className="bg-slate-900 rounded-2xl p-6 text-white shadow-xl">
-            <h2 className="font-bold text-lg mb-4 flex items-center gap-2">
-              <AlertCircle className="w-5 h-5 text-amber-400" /> Prepare for Lawyer
-            </h2>
-            <p className="text-slate-400 text-sm mb-4">Consider asking a qualified legal professional the following questions based on this analysis:</p>
-            <ul className="space-y-3">
-              {(!analysis.questionsForLawyer || analysis.questionsForLawyer.length === 0) ? (
-                <p className="text-slate-500 text-sm italic">No specific questions generated.</p>
-              ) : analysis.questionsForLawyer.map((q, idx) => (
-                <li key={idx} className="flex gap-3 text-sm bg-slate-800 p-3 rounded-lg border border-slate-700">
-                  <span className="text-blue-400 font-bold">{idx + 1}.</span>
-                  <span>{q}</span>
-                </li>
-              ))}
-            </ul>
-          </section>
+          {lawyerQuestions.length > 0 && (
+            <section className="bg-slate-900 rounded-2xl p-5 sm:p-8 text-white shadow-xl" aria-labelledby="lawyer-title">
+              <h2 id="lawyer-title" className="font-bold text-lg sm:text-xl mb-3 flex items-center gap-2">
+                <AlertCircle className="w-6 h-6 text-amber-400" aria-hidden="true" /> Questions for Your Lawyer
+              </h2>
+              <p className="text-slate-300 text-sm mb-5">Consider asking a qualified professional these questions:</p>
+              <ol className="space-y-3 list-none">
+                {lawyerQuestions.map((q, idx) => (
+                  <li key={idx} className="flex items-start gap-3 text-sm bg-slate-800 p-4 rounded-xl border border-slate-700">
+                    <span className="text-blue-400 font-bold shrink-0 mt-0.5">{idx + 1}.</span>
+                    <span className="text-slate-200 leading-relaxed">{q}</span>
+                  </li>
+                ))}
+              </ol>
+            </section>
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-function InfoCard({ label, value }) {
-  if (!value) return null;
+// === Detail Card Component ===
+function DetailCard({ icon, label, items }) {
+  const hasData = items.length > 0 && !items.every(i => i === 'Not found in the document.');
+
   return (
-    <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-      <p className="text-xs text-slate-500 font-medium uppercase tracking-wider mb-1">{label}</p>
-      <p className="font-bold text-slate-900">{value}</p>
+    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+      <div className="flex items-center gap-2 mb-3">
+        <div className="p-2 bg-slate-50 rounded-lg text-slate-500" aria-hidden="true">{icon}</div>
+        <h3 className="text-xs text-slate-500 font-bold uppercase tracking-wider">{label}</h3>
+      </div>
+      {hasData ? (
+        <ul className="space-y-1">
+          {items.map((item, i) => (
+            <li key={i} className="text-sm font-semibold text-slate-800">{item}</li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-sm text-slate-400 italic">Not specified</p>
+      )}
     </div>
   );
 }
